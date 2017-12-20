@@ -35,7 +35,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"mime/multipart"
 	"net/http"
 
 	"github.com/pkg/errors"
@@ -73,23 +72,6 @@ func (c *Client) Run(ctx context.Context, req *Request, resp interface{}) error 
 	default:
 	}
 
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-	if err := writer.WriteField("query", req.Query); err != nil {
-		return errors.Wrap(err, "write query field")
-	}
-	if len(req.Variables) > 0 {
-		variablesField, err := writer.CreateFormField("variables")
-		if err != nil {
-			return errors.Wrap(err, "create variables field")
-		}
-		if err := json.NewEncoder(variablesField).Encode(req.Variables); err != nil {
-			return errors.Wrap(err, "encode variables")
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return errors.Wrap(err, "close writer")
-	}
 	var graphResponse = struct {
 		Data   interface{}
 		Errors []graphErr
@@ -97,11 +79,16 @@ func (c *Client) Run(ctx context.Context, req *Request, resp interface{}) error 
 		Data: resp,
 	}
 
-	r, err := http.NewRequest(http.MethodPost, c.endpoint, &requestBody)
+	b, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	r.Header.Set("Content-Type", writer.FormDataContentType())
+
+	r, err := http.NewRequest(http.MethodPost, c.endpoint, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "application/json")
 	r = r.WithContext(ctx)
 	res, err := c.httpClient.Do(r)

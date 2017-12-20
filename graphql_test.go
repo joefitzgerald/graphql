@@ -1,7 +1,8 @@
-package graphql
+package graphql_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joefitzgerald/graphql"
 	. "github.com/onsi/gomega"
 )
 
@@ -27,9 +29,9 @@ func TestWithClient(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	client := NewClient("", WithHTTPClient(testClient))
+	client := graphql.NewClient("", graphql.WithHTTPClient(testClient))
 
-	req := NewRequest(``)
+	req := graphql.NewRequest(``)
 	client.Run(ctx, req, nil)
 
 	Expect(calls).Should(Equal(1))
@@ -41,8 +43,10 @@ func TestDo(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		Expect(r.Method).Should(Equal(http.MethodPost))
-		query := r.FormValue("query")
-		Expect(query).Should(Equal(`query {}`))
+		defer r.Body.Close()
+		var req graphql.Request
+		json.NewDecoder(r.Body).Decode(&req)
+		Expect(req.Query).Should(Equal(`query {}`))
 		io.WriteString(w, `{
 			"data": {
 				"something": "yes"
@@ -52,12 +56,12 @@ func TestDo(t *testing.T) {
 	defer srv.Close()
 
 	ctx := context.Background()
-	client := NewClient(srv.URL)
+	client := graphql.NewClient(srv.URL)
 
 	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	var responseData map[string]interface{}
-	err := client.Run(ctx, &Request{Query: "query {}"}, &responseData)
+	err := client.Run(ctx, &graphql.Request{Query: "query {}"}, &responseData)
 	Expect(err).ShouldNot(HaveOccurred())
 	Expect(calls).Should(Equal(1))
 	Expect(responseData["something"]).Should(Equal("yes"))
@@ -69,8 +73,10 @@ func TestDoErr(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		Expect(r.Method).Should(Equal(http.MethodPost))
-		query := r.FormValue("query")
-		Expect(query).Should(Equal(`query {}`))
+		defer r.Body.Close()
+		var req graphql.Request
+		json.NewDecoder(r.Body).Decode(&req)
+		Expect(req.Query).Should(Equal(`query {}`))
 		io.WriteString(w, `{
 			"errors": [{
 				"message": "Something went wrong"
@@ -80,12 +86,12 @@ func TestDoErr(t *testing.T) {
 	defer srv.Close()
 
 	ctx := context.Background()
-	client := NewClient(srv.URL)
+	client := graphql.NewClient(srv.URL)
 
 	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	var responseData map[string]interface{}
-	err := client.Run(ctx, &Request{Query: "query {}"}, &responseData)
+	err := client.Run(ctx, &graphql.Request{Query: "query {}"}, &responseData)
 	Expect(err).ShouldNot(BeNil())
 	Expect(err.Error()).Should(Equal("graphql: Something went wrong"))
 }
@@ -96,8 +102,10 @@ func TestDoNoResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		Expect(r.Method).Should(Equal(http.MethodPost))
-		query := r.FormValue("query")
-		Expect(query).Should(Equal(`query {}`))
+		defer r.Body.Close()
+		var req graphql.Request
+		json.NewDecoder(r.Body).Decode(&req)
+		Expect(req.Query).Should(Equal(`query {}`))
 		io.WriteString(w, `{
 			"data": {
 				"something": "yes"
@@ -107,11 +115,11 @@ func TestDoNoResponse(t *testing.T) {
 	defer srv.Close()
 
 	ctx := context.Background()
-	client := NewClient(srv.URL)
+	client := graphql.NewClient(srv.URL)
 
 	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
-	err := client.Run(ctx, &Request{Query: "query {}"}, nil)
+	err := client.Run(ctx, &graphql.Request{Query: "query {}"}, nil)
 	Expect(err).ShouldNot(HaveOccurred())
 	Expect(calls).Should(Equal(1))
 }
@@ -122,9 +130,13 @@ func TestQuery(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		query := r.FormValue("query")
-		Expect(query).Should(Equal("query {}"))
-		Expect(r.FormValue("variables")).Should(Equal(`{"username":"tester"}` + "\n"))
+		defer r.Body.Close()
+		var req graphql.Request
+		json.NewDecoder(r.Body).Decode(&req)
+		Expect(req.Query).Should(Equal("query {}"))
+		expected := map[string]interface{}{}
+		expected["username"] = "tester"
+		Expect(req.Variables).Should(Equal(expected))
 		_, err := io.WriteString(w, `{"data":{"value":"some data"}}`)
 		Expect(err).ShouldNot(HaveOccurred())
 	}))
@@ -132,9 +144,9 @@ func TestQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	client := NewClient(srv.URL)
+	client := graphql.NewClient(srv.URL)
 
-	req := NewRequest("query {}")
+	req := graphql.NewRequest("query {}")
 	req.Var("username", "tester")
 
 	// check variables
